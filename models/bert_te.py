@@ -2,9 +2,9 @@ import torch
 import torch.nn as nn
 
 
-class BERT_BIO(nn.Module):
+class BERT_TE(nn.Module):
     def __init__(self, bert, opt):
-        super(BERT_BIO, self).__init__()
+        super(BERT_TE, self).__init__()
         self.bert = bert
         self.dropout = nn.Dropout(opt.dropout)
         self.dense = nn.Linear(opt.bert_dim, opt.class_dim)

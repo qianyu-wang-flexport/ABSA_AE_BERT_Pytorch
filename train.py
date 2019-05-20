@@ -1,9 +1,4 @@
-# -*- coding: utf-8 -*-
-# file: train.py
-# author: songyouwei <youwei0314@gmail.com>
-# Copyright (C) 2018. All Rights Reserved.
 from pytorch_pretrained_bert import BertModel
-from sklearn import metrics
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
@@ -13,8 +8,9 @@ import math
 import os
 from pytorch_pretrained_bert.optimization import BertAdam
 from models.bert_bio import BERT_BIO
+from models.bert_sa import BERT_SA
+from models.bert_te import BERT_TE
 from torch.utils.data import Dataset
-from models.aen import CrossEntropyLoss_LSR, AEN, AEN_BERT
 import pickle
 
 bert_path='/data/bert-pretrained-models/bert-base-uncased'
@@ -35,7 +31,7 @@ class Instructor:
     def __init__(self, opt):
         self.opt = opt
         bert = BertModel.from_pretrained(bert_path)
-        self.model = BERT_BIO(bert, opt).to(opt.device)
+        self.model = opt.model(bert, opt).to(opt.device)
 
         trainset =MyDataset(opt.dataset_file['train'])
         testset = MyDataset(opt.dataset_file['test'])
@@ -74,12 +70,14 @@ class Instructor:
         writer = SummaryWriter(log_dir=self.opt.logdir)
         max_test_acc = 0
         max_f1 = 0
+        max_epoch=0
         global_step = 0
         for epoch in range(self.opt.num_epoch):
             print('>' * 100)
             print('epoch: ', epoch)
             n_correct, n_total = 0, 0
             for i_batch, sample_batched in enumerate(self.train_data_loader):
+                # print('train batch num:{}'.format(i_batch))
                 global_step += 1
 
                 # switch model to training mode, clear gradient accumulators
@@ -88,15 +86,22 @@ class Instructor:
 
                 inputs = [sample_batched[col].to(self.opt.device) for col in self.opt.inputs_cols]
                 outputs = self.model(inputs)
-                targets = sample_batched['bio_tensor'].to(self.opt.device)
+                targets = sample_batched[opt.outputs_col].to(self.opt.device)
+
+                # print(outputs.shape)
+                # print(targets.shape)
+
                 s_batch_size=targets.shape[0]
-                loss = criterion(outputs.view(s_batch_size*opt.max_len,-1), targets.view(s_batch_size*opt.max_len))
+                if opt.model_name=='bert_bio' or opt.model_name=='bert_te':
+                    loss = criterion(outputs.view(s_batch_size*opt.max_len,-1), targets.view(s_batch_size*opt.max_len))
+                else:
+                    loss=criterion(outputs,targets)
                 loss.backward()
                 optimizer.step()
 
                 if global_step % self.opt.log_step == 0:
                     n_correct += (torch.argmax(outputs, -1) == targets).sum().item()
-                    n_total += len(outputs)
+                    n_total += targets.view(-1).shape[0]
                     train_acc = n_correct / n_total
 
                     # switch model to evaluation mode
@@ -107,9 +112,11 @@ class Instructor:
                     if f1 > max_f1:
                         max_test_acc = test_acc
                         max_f1=f1
+                        max_epoch=epoch
                         if not os.path.exists('state_dict'):
                             os.mkdir('state_dict')
-                        path = 'state_dict/{0}_{1}_f1{2}'.format(self.opt.model_name, self.opt.dataset, round(f1, 4))
+                        print('>>>max_acc:{:.4f},max_f1:{:.4f}'.format(max_test_acc,max_f1))
+                        # path = 'state_dict/{0}_{1}_f1{2}'.format(self.opt.model_name, self.opt.dataset, round(f1, 4))
                         # torch.save(self.model.state_dict(), path)
                         # print('>> saved: ' + path)
 
@@ -119,7 +126,7 @@ class Instructor:
                     print('loss: {:.4f}, acc: {:.4f}, test_acc: {:.4f}, f1: {:.4f}'.format(loss.item(), train_acc, test_acc, f1))
 
         writer.close()
-        return max_test_acc, max_f1
+        return max_test_acc, max_f1,max_epoch
 
     def _get_seq_index(self,seq):
         bio_list=[]
@@ -145,23 +152,35 @@ class Instructor:
         with torch.no_grad():
             for t_batch, t_sample_batched in enumerate(self.test_data_loader):
                 t_inputs = [t_sample_batched[col].to(self.opt.device) for col in self.opt.inputs_cols]
-                t_targets = t_sample_batched['bio_tensor'].to(opt.device)
+                t_targets = t_sample_batched[opt.outputs_col].to(opt.device)
                 t_outputs = self.model(t_inputs)
                 s_batch_size=t_targets.shape[0]
-                # print(t_outputs.shape)
+
                 for i in range(s_batch_size):
+
                     s_output=t_outputs[i]
                     s_target=t_targets[i]
                     # s_token_indices=t_inputs[0][i]
                     s_pred=torch.argmax(s_output,-1)
-                    pred_list=self._get_seq_index(s_pred)
-                    target_list=self._get_seq_index(s_target)
-                    for pred in pred_list:
-                        if pred in target_list:
+
+                    if opt.model_name == 'bert_bio' or opt.model_name == 'bert_te':
+                        pred_list=self._get_seq_index(s_pred)
+                        target_list=self._get_seq_index(s_target)
+                        for pred in pred_list:
+                            if pred in target_list:
+                                n_test_correct+=1
+                        n_test_total += len(pred_list)
+                        n_ground_truth += len(target_list)
+                    else:
+                        if s_pred==s_target:
                             n_test_correct+=1
-                    n_test_total+=len(pred_list)
-                    n_ground_truth+=len(target_list)
-        test_acc = n_test_correct / n_test_total
+                        n_test_total+=1
+                        n_ground_truth+=1
+
+        if n_test_total==0:
+            test_acc=0
+        else:
+            test_acc = n_test_correct / n_test_total
         test_recall=n_test_correct/n_ground_truth
         print('test_correct:{},test_total:{},ground_truth:{}'.format(n_test_correct,n_test_total,n_ground_truth))
         if test_acc==0 or test_recall==0:
@@ -181,8 +200,8 @@ class Instructor:
         # print(optimizer)
 
         self._reset_params()
-        max_test_acc, max_f1 = self._train(criterion, optimizer)
-        print('max_test_acc: {0}     max_f1: {1}'.format(max_test_acc, max_f1))
+        max_test_acc, max_f1,max_epoch = self._train(criterion, optimizer)
+        print('epoch {} get max_test_acc: {:.4f}     max_f1: {:.4f}'.format(max_epoch,max_test_acc, max_f1))
 
 
 if __name__ == '__main__':
@@ -205,21 +224,37 @@ if __name__ == '__main__':
     parser.add_argument('--pretrained_bert_name', default='bert-base-uncased', type=str)
     parser.add_argument('--max_len', default=100, type=int)
     parser.add_argument('--polarities_dim', default=3, type=int)
-    parser.add_argument('--bio_dim', default=5, type=int)
     parser.add_argument('--hops', default=3, type=int)
     parser.add_argument('--device', default=None, type=str)
     opt = parser.parse_args()
 
     dataset_path = 'datasets/semeval14'
 
+    models={
+        'bert_bio':BERT_BIO,
+        'bert_sa':BERT_SA,
+        'bert_te':BERT_TE
+    }
     dataset_files = {
         'restaurant':{
             'train':os.path.join(dataset_path, 'Restaurants_Train.pkl'),
             'test':os.path.join(dataset_path, 'Restaurants_Test.pkl')
         }
     }
-    input_colses = {
-        'bert_bio':['all_index_tensor','all_id_tensor']
+    class_dims={
+        'bert_bio':5,
+        'bert_te':3,
+        'bert_sa':4
+    }
+    input_columns = {
+        'bert_bio':['all_index_tensor','all_id_tensor'],
+        'bert_sa':['all_index_tensor','all_id_tensor'],
+        'bert_te':['all_index_tensor','all_id_tensor']
+    }
+    output_columns={
+        'bert_bio':'bio_tensor',
+        'bert_sa':'polarity',
+        'bert_te':'bio_normal_tensor'
     }
     initializers = {
         'xavier_uniform_': torch.nn.init.xavier_uniform_,
@@ -236,12 +271,14 @@ if __name__ == '__main__':
         'sgd': torch.optim.SGD,
         'bertAdam':BertAdam
     }
+    opt.class_dim=class_dims[opt.model_name]
+    opt.model=models[opt.model_name]
     opt.dataset_file = dataset_files[opt.dataset]
-    opt.inputs_cols = input_colses[opt.model_name]
+    opt.inputs_cols = input_columns[opt.model_name]
     opt.initializer = initializers[opt.initializer]
     opt.optimizer = optimizers[opt.optimizer]
     opt.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu') \
         if opt.device is None else torch.device(opt.device)
-
+    opt.outputs_col=output_columns[opt.model_name]
     ins = Instructor(opt)
     ins.run()
