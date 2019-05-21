@@ -47,7 +47,11 @@ def get_token_tensor(context,aspect,polarity,max_len):
     }
     return data
 
-#O:0    B-neg:1    B-neu:2     B-pos:3     I:4
+'''
+bio_tensor for bert_bio: O:0    B-neg:1    B-neu:2     B-pos:3     I:4
+bio_normal_tensor for bert_te: O:0    B:1    I:2
+'''
+
 def get_preprocessing_data(file,max_len):
 
     f=open(file)
