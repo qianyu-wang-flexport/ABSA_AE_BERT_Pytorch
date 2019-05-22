@@ -14,6 +14,12 @@ def data_padding(max_len,seq_tensor):
     x[:len(trunc)] = trunc
 
     return x
+
+'''
+bio_tensor for bert_bio: O:0    B-neg:1    B-neu:2     B-pos:3     I:4
+bio_normal_tensor for bert_te: O:0    B:1    I:2
+polarity: negative:0    neural:1    positive:2    conflict:3
+'''
 def get_token_tensor(context,aspect,polarity,max_len):
 
     context_list = context.split('$T$')
@@ -47,10 +53,7 @@ def get_token_tensor(context,aspect,polarity,max_len):
     }
     return data
 
-'''
-bio_tensor for bert_bio: O:0    B-neg:1    B-neu:2     B-pos:3     I:4
-bio_normal_tensor for bert_te: O:0    B:1    I:2
-'''
+
 
 def get_preprocessing_data(file,max_len):
 
@@ -100,6 +103,7 @@ def get_birt_testset():
     f.close()
     return all_data
 
+#将原文中的括号（-LRB-,-RRB-)替换为（（））
 def replace_blaket(filename):
     f=open(filename,'r')
     lines=f.readlines()
@@ -111,9 +115,21 @@ def replace_blaket(filename):
     f2=open(filename,'w')
     f2.writelines(lines)
     f2.close()
+
+def get_cutout_data(data):
+    num=0
+    new_data=[]
+    for s_data in data:
+        if s_data['polarity']!=3:
+            new_data.append(s_data)
+        else:
+            num+=1
+    print('共有{}条冲突评论'.format(num))
+    return new_data
+
 if __name__=='__main__':
-    # max_len=100
-    # dataset_path='datasets/semeval14'
+    max_len=100
+    dataset_path='datasets/semeval14'
     # restaurant_train_file =os.path.join(dataset_path, 'Restaurants_Train.xml.seg')
     # restaurant_test_file=os.path.join(dataset_path,'Restaurants_Test_Gold.xml.seg')
     #
@@ -128,14 +144,29 @@ if __name__=='__main__':
     # f2=open(test_data_file,'wb')
     # pickle.dump(test_all_data,f2)
     # f2.close()
-    all_data=get_birt_testset()
+
+    # all_data2=get_birt_trainset()
     # for i in range(100):
     #     print("{}:{}".format(i*3,all_data[i]['all_tokenizer']))
 
-    # print(len(all_data))
-    print(all_data[0])
+    # print(all_data1[:20])
+    # print(len(all_data2))
 
     # file = open('data_preprocessing.pkl', 'rb')
     # all_data=pickle.load(file)
     # print(len(all_data))
     # print(all_data[4])
+
+    all_train_data = get_birt_trainset()
+    all_test_data = get_birt_testset()
+    cutout_train_data = get_cutout_data(all_train_data)
+    cutout_test_data = get_cutout_data(all_test_data)
+    cutout_train_file = os.path.join(dataset_path, 'Cutout_Restaurant_Train.pkl')
+    cutout_test_file = os.path.join(dataset_path, 'Cutout_Restaurant_Test.pkl')
+    f1=open(cutout_train_file,'wb')
+    f2=open(cutout_test_file,'wb')
+    pickle.dump(cutout_test_data, f2)
+    pickle.dump(cutout_train_data, f1)
+    f1.close()
+    f2.close()
+

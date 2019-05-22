@@ -12,6 +12,7 @@ from models.bert_sa import BERT_SA
 from models.bert_te import BERT_TE
 from torch.utils.data import Dataset
 import pickle
+from sklearn import metrics
 
 bert_path='/data/bert-pretrained-models/bert-base-uncased'
 
@@ -77,11 +78,10 @@ class Instructor:
 
     def _train(self, criterion, optimizer):
         writer = SummaryWriter(log_dir=self.opt.logdir)
-        max_test_acc = 0
+        max_test_precision = 0
         max_f1 = 0
         max_epoch=0
         global_step = 0
-        f1=0
         for epoch in range(self.opt.num_epoch):
             print('>' * 100)
             print('epoch: ', epoch)
@@ -112,31 +112,33 @@ class Instructor:
                 if global_step % self.opt.log_step == 0:
                     n_correct += (torch.argmax(outputs, -1) == targets).sum().item()
                     n_total += targets.view(-1).shape[0]
-                    train_acc = n_correct / n_total
+                    train_precision = n_correct / n_total
 
                     # switch model to evaluation mode
                     self.model.eval()
-                    test_acc, f1 = self._evaluate_acc_f1()
+                    test_precision, f1 = self._evaluate_acc_f1()
 
-                    #20190510以f1为评价标准
-                    if f1 > max_f1:
-                        max_test_acc = test_acc
+                    #20190522以f1为评价标准
+                    if f1>max_f1:
+                        max_test_precision = test_precision
                         max_f1=f1
                         max_epoch=epoch
-                        # if not os.path.exists('state_dict'):
-                        #     os.mkdir('state_dict')
-                        print('>>>max_acc:{:.4f},max_f1:{:.4f}'.format(max_test_acc,max_f1))
-                        # path = 'state_dict/{0}_{1}_f1{2}'.format(self.opt.model_name, self.opt.dataset, round(f1, 4))
-                        # torch.save(self.model.state_dict(), path)
-                        # print('>> saved: ' + path)
+                        if opt.save_state_dic == "Yes":
+                            if not os.path.exists('state_dict'):
+                                os.mkdir('state_dict')
+                            path = 'state_dict/{0}_{1}_pre{2}_f1{3}'.format(self.opt.model_name, self.opt.dataset,
+                                                                     round(test_precision,4),round(f1, 4))
+                            torch.save(self.model.state_dict(), path)
+                            print('>> saved: ' + path)
+                        print('>>>max_precision:{:.4f},max_f1:{:.4f}'.format(max_test_precision,max_f1))
 
                     writer.add_scalar('loss', loss, global_step)
-                    writer.add_scalar('acc', train_acc, global_step)
-                    writer.add_scalar('test_acc', test_acc, global_step)
-                    print('loss: {:.4f}, acc: {:.4f}, test_acc: {:.4f}, f1: {:.4f}'.format(loss.item(), train_acc, test_acc, f1))
+                    writer.add_scalar('train_precision', train_precision, global_step)
+                    writer.add_scalar('test_precision', test_precision, global_step)
+                    print('loss: {:.4f}, train_precision: {:.4f}, test_precision: {:.4f}, f1: {:.4f}'.format(loss.item(), train_precision, test_precision, f1))
 
         writer.close()
-        return max_test_acc, max_f1,max_epoch,f1
+        return max_test_precision, max_f1,max_epoch
 
     def _get_seq_index(self,seq):
         bio_list=[]
@@ -148,7 +150,7 @@ class Instructor:
                 polarity=pred
                 index_list=[k]
                 k+=1
-                while k<opt.max_len and seq[k].item==i_label:
+                while k<opt.max_len and seq[k].item()==i_label:
                     index_list.append(k)
                     k+=1
                 bio_list.append((polarity,index_list) if self.opt.model_name=='bert_bio' else index_list)
@@ -160,6 +162,8 @@ class Instructor:
     def _evaluate_acc_f1(self):
         n_test_correct, n_test_total = 0, 0
         n_ground_truth=0
+        t_targets_all, t_outputs_all = None, None
+
         with torch.no_grad():
             for t_batch, t_sample_batched in enumerate(self.test_data_loader):
                 t_inputs = [t_sample_batched[col].to(self.opt.device) for col in self.opt.inputs_cols]
@@ -167,38 +171,51 @@ class Instructor:
                 t_outputs = self.model(t_inputs)
                 s_batch_size=t_targets.shape[0]
 
-                for i in range(s_batch_size):
+                if opt.model_name=='bert_sa':
+                    n_test_correct += (torch.argmax(t_outputs, -1) == t_targets).sum().item()
+                    n_test_total += len(t_outputs)
 
-                    s_output=t_outputs[i]
-                    s_target=t_targets[i]
-                    # s_token_indices=t_inputs[0][i]
-                    s_pred=torch.argmax(s_output,-1)
+                    if t_targets_all is None:
+                        t_targets_all = t_targets
+                        t_outputs_all = t_outputs
+                    else:
+                        t_targets_all = torch.cat((t_targets_all, t_targets), dim=0)
+                        t_outputs_all = torch.cat((t_outputs_all, t_outputs), dim=0)
 
-                    if opt.model_name == 'bert_bio' or opt.model_name == 'bert_te':
+                elif opt.model_name=='bert_bio' or opt.model_name=='bert_te':
+                    for i in range(s_batch_size):
+
+                        s_output=t_outputs[i]
+                        s_target=t_targets[i]
+                        # s_token_indices=t_inputs[0][i]
+                        s_pred=torch.argmax(s_output,-1)
                         pred_list=self._get_seq_index(s_pred)
                         target_list=self._get_seq_index(s_target)
+                        # print('pred_list:{}'.format(pred_list))
+                        # print('target_list:{}'.format(target_list))
                         for pred in pred_list:
                             if pred in target_list:
                                 n_test_correct+=1
                         n_test_total += len(pred_list)
                         n_ground_truth += len(target_list)
-                    else:
-                        if s_pred==s_target:
-                            n_test_correct+=1
-                        n_test_total+=1
-                        n_ground_truth+=1
-
-        if n_test_total==0:
-            test_acc=0
+                else:
+                    print("No match model")
+        if opt.model_name=='bert_sa':
+            f1 = metrics.f1_score(t_targets_all.cpu(), torch.argmax(t_outputs_all, -1).cpu(), labels=[0, 1, 2],
+                                  average='macro')
+            test_precision=metrics.precision_score(t_targets_all.cpu(), torch.argmax(t_outputs_all, -1).cpu(), labels=[0, 1, 2],average='macro')
         else:
-            test_acc = n_test_correct / n_test_total
-        test_recall=n_test_correct/n_ground_truth
-        print('test_correct:{},test_total:{},ground_truth:{}'.format(n_test_correct,n_test_total,n_ground_truth))
-        if test_acc==0 or test_recall==0:
-            f1=0
-        else:
-            f1=2*test_acc*test_recall/(test_acc+test_recall)
-        return test_acc, f1
+            if n_test_total == 0:
+                test_precision = 0
+            else:
+                test_precision = n_test_correct / n_test_total
+            test_recall=n_test_correct/n_ground_truth
+            # print('test_correct:{},test_total:{},ground_truth:{}'.format(n_test_correct,n_test_total,n_ground_truth))
+            if test_precision==0 or test_recall==0:
+                f1=0
+            else:
+                f1=2*test_precision*test_recall/(test_precision+test_recall)
+        return test_precision, f1
 
     def run(self):
         # Loss and Optimizer
@@ -211,14 +228,8 @@ class Instructor:
         # print(optimizer)
 
         self._reset_params()
-        max_test_acc, max_f1,max_epoch,f1 = self._train(criterion, optimizer)
-        if opt.save_state_dic == "Yes":
-            if not os.path.exists('state_dict'):
-                os.mkdir('state_dict')
-            path = 'state_dict/{0}_{1}_f1{2}'.format(self.opt.model_name, self.opt.dataset, round(f1, 4))
-            torch.save(self.model.state_dict(), path)
-            print('>> saved: ' + path)
-        print('epoch {} get max_test_acc: {:.4f}     max_f1: {:.4f}'.format(max_epoch,max_test_acc, max_f1))
+        max_test_precision, max_f1,max_epoch= self._train(criterion, optimizer)
+        print('epoch {} get max_test_precision: {:.4f}     max_f1: {:.4f}'.format(max_epoch,max_test_precision, max_f1))
 
 
 if __name__ == '__main__':
@@ -256,19 +267,31 @@ if __name__ == '__main__':
     }
 
     state_dic_file={
-        'bert_bio':'state_dict/bert_te_restaurant_f10.8809',
-        'bert_te':'state_dict/bert_bio_restaurant_f10.754'
+        'bert_bio':'state_dict/bert_te_restaurant_f10.8056',
+        'bert_te':'state_dict/bert_sa_restaurant_f10.787',
+        'bert_sa':'state_dict/bert_te_restaurant_f10.8056'
     }
+    # dataset_files = {
+    #     'restaurant':{
+    #         'train':os.path.join(dataset_path, 'Restaurants_Train.pkl'),
+    #         'test':os.path.join(dataset_path, 'Restaurants_Test.pkl')
+    #     }
+    # }
     dataset_files = {
-        'restaurant':{
-            'train':os.path.join(dataset_path, 'Restaurants_Train.pkl'),
-            'test':os.path.join(dataset_path, 'Restaurants_Test.pkl')
+        'restaurant': {
+            'train': os.path.join(dataset_path, 'Cutout_Restaurant_Train.pkl'),
+            'test': os.path.join(dataset_path, 'Cutout_Restaurant_Test.pkl')
         }
     }
-    class_dims={
-        'bert_bio':5,
-        'bert_te':3,
-        'bert_sa':4
+    # class_dims={
+    #     'bert_bio':5,
+    #     'bert_te':3,
+    #     'bert_sa':4
+    # }
+    class_dims = {
+        'bert_bio': 5,
+        'bert_te': 3,
+        'bert_sa': 3
     }
     input_columns = {
         'bert_bio':['all_index_tensor','all_id_tensor'],
