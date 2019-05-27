@@ -13,7 +13,7 @@ from models.bert_te import BERT_TE
 from torch.utils.data import Dataset
 import pickle
 from sklearn import metrics
-
+from torchcrf import CRF
 bert_path='/data/bert-pretrained-models/bert-base-uncased'
 
 class MyDataset(Dataset):
@@ -33,6 +33,10 @@ class Instructor:
         self.opt = opt
         bert = BertModel.from_pretrained(bert_path)
         self.model = opt.model(bert, opt).to(opt.device)
+
+        #添加crf层
+        self.crf=CRF(opt.class_dim,batch_first=True).to(opt.device)
+
         if opt.load_state_dic == 'Yes':
             state_dic_path=opt.load_state_dic_file
             pretrained_dic=torch.load(state_dic_path)
@@ -76,7 +80,7 @@ class Instructor:
                             stdv = 1. / math.sqrt(p.shape[0])
                             torch.nn.init.uniform_(p, a=-stdv, b=stdv)
 
-    def _train(self, criterion, optimizer):
+    def _train(self, optimizer):
         writer = SummaryWriter(log_dir=self.opt.logdir)
         max_test_precision = 0
         max_f1 = 0
@@ -98,14 +102,9 @@ class Instructor:
                 outputs = self.model(inputs)
                 targets = sample_batched[opt.outputs_col].to(self.opt.device)
 
-                # print(outputs.shape)
-                # print(targets.shape)
+                loss=self.crf(outputs,targets)
+                # loss = criterion(outputs.view(s_batch_size*opt.max_len,-1), targets.view(s_batch_size*opt.max_len))
 
-                s_batch_size=targets.shape[0]
-                if opt.model_name=='bert_bio' or opt.model_name=='bert_te':
-                    loss = criterion(outputs.view(s_batch_size*opt.max_len,-1), targets.view(s_batch_size*opt.max_len))
-                else:
-                    loss=criterion(outputs,targets)
                 loss.backward()
                 optimizer.step()
 
@@ -219,17 +218,14 @@ class Instructor:
         return test_precision, f1
 
     def run(self):
-        # Loss and Optimizer
-        criterion = nn.CrossEntropyLoss()
         _params = filter(lambda p: p.requires_grad, self.model.parameters())
         if self.opt.optimizer==BertAdam:
             optimizer = self.opt.optimizer(_params, lr=self.opt.learning_rate, weight_decay=self.opt.l2reg,warmup=0.1)
         else:
             optimizer = self.opt.optimizer(_params, lr=self.opt.learning_rate, weight_decay=self.opt.l2reg)
-        # print(optimizer)
 
         self._reset_params()
-        max_test_precision, max_f1,max_epoch= self._train(criterion, optimizer)
+        max_test_precision, max_f1,max_epoch= self._train(optimizer)
         print('epoch {} get max_test_precision: {:.4f}     max_f1: {:.4f}'.format(max_epoch,max_test_precision, max_f1))
 
 
@@ -272,23 +268,13 @@ if __name__ == '__main__':
         'bert_te':'state_dict/bert_sa_restaurant_f10.787',
         'bert_sa':'state_dict/bert_te_restaurant_f10.8056'
     }
-    # dataset_files = {
-    #     'restaurant':{
-    #         'train':os.path.join(dataset_path, 'Restaurants_Train.pkl'),
-    #         'test':os.path.join(dataset_path, 'Restaurants_Test.pkl')
-    #     }
-    # }
     dataset_files = {
-        'restaurant': {
-            'train': os.path.join(dataset_path, 'Cutout_Restaurant_Train.pkl'),
-            'test': os.path.join(dataset_path, 'Cutout_Restaurant_Test.pkl')
+        'restaurant':{
+            'train':os.path.join(dataset_path, 'Restaurants_Train.pkl'),
+            'test':os.path.join(dataset_path, 'Restaurants_Test.pkl')
         }
     }
-    # class_dims={
-    #     'bert_bio':5,
-    #     'bert_te':3,
-    #     'bert_sa':4
-    # }
+
     class_dims = {
         'bert_bio': 5,
         'bert_te': 3,
