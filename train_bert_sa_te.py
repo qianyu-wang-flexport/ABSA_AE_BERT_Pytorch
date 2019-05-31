@@ -11,6 +11,7 @@ from models.bert_sa_te import BERT_SA_TE
 from torch.utils.data import Dataset
 import pickle
 from sklearn import metrics
+from models.bert_sate_multilayer import BERT_SATE_MUTILAYER
 
 bert_path='/data/bert-pretrained-models/bert-base-uncased'
 
@@ -254,7 +255,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--model_name', default='bert_sa_te', type=str)
     parser.add_argument('--dataset', default='restaurant', type=str, help='twitter, restaurant, laptop')
-    parser.add_argument('--optimizer', default='adam', type=str)
+    parser.add_argument('--optimizer', default='bertAdam', type=str)
     parser.add_argument('--initializer', default='xavier_uniform_', type=str)
     parser.add_argument('--learning_rate', default=2e-5, type=float)  # try 5e-5, 3e-5, 2e-5 for BERT models (sensitive)
     parser.add_argument('--dropout', default=0.1, type=float)
@@ -278,7 +279,8 @@ if __name__ == '__main__':
     dataset_path = 'datasets/semeval14'
 
     models={
-        'bert_sa_te':BERT_SA_TE
+        # 'bert_sa_te':BERT_SA_TE
+        'bert_sa_te':BERT_SATE_MUTILAYER
     }
 
     state_dic_file={

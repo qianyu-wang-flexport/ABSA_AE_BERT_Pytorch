@@ -12,6 +12,7 @@ from models.bert_sa import BERT_SA
 from models.bert_te import BERT_TE
 from torch.utils.data import Dataset
 import pickle
+from models.bert_multilayer import BERT_MULTILAYER
 
 bert_path='/data/bert-pretrained-models/bert-base-uncased'
 
@@ -137,7 +138,7 @@ class Instructor:
                 polarity=pred
                 index_list=[k]
                 k+=1
-                while k<opt.max_len and seq[k].item==4:
+                while k<opt.max_len and seq[k].item()==4:
                     index_list.append(k)
                     k+=1
                 bio_list.append((polarity,index_list))

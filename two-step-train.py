@@ -13,6 +13,7 @@ from models.bert_te import BERT_TE
 from torch.utils.data import Dataset
 import pickle
 from sklearn import metrics
+from models.bert_multilayer import BERT_MULTILAYER,Layer_Att
 
 bert_path='/data/bert-pretrained-models/bert-base-uncased'
 
@@ -33,6 +34,9 @@ class Instructor:
         self.opt = opt
         bert = BertModel.from_pretrained(bert_path)
         self.model = opt.model(bert, opt).to(opt.device)
+
+        # for child in self.model.children():
+        #     print(type(child))
         if opt.load_state_dic == 'Yes':
             state_dic_path=opt.load_state_dic_file
             pretrained_dic=torch.load(state_dic_path)
@@ -218,6 +222,12 @@ class Instructor:
                 f1=2*test_precision*test_recall/(test_precision+test_recall)
         return test_precision, f1
 
+    def print_parameter(self,child_model):
+        for child in self.model.children():
+            if type(child)==child_model:
+                for p in child.parameters():
+                    if p.requires_grad==True:
+                        print(p)
     def run(self):
         # Loss and Optimizer
         criterion = nn.CrossEntropyLoss()
@@ -227,9 +237,11 @@ class Instructor:
         else:
             optimizer = self.opt.optimizer(_params, lr=self.opt.learning_rate, weight_decay=self.opt.l2reg)
         # print(optimizer)
-
+        # self.print_parameter(Layer_Att)
         self._reset_params()
+        # self.print_parameter(Layer_Att)
         max_test_precision, max_f1,max_epoch= self._train(criterion, optimizer)
+        # self.print_parameter(Layer_Att)
         print('epoch {} get max_test_precision: {:.4f}     max_f1: {:.4f}'.format(max_epoch,max_test_precision, max_f1))
 
 
@@ -238,7 +250,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--model_name', default='bert_bio', type=str)
     parser.add_argument('--dataset', default='restaurant', type=str, help='twitter, restaurant, laptop')
-    parser.add_argument('--optimizer', default='adam', type=str)
+    parser.add_argument('--optimizer', default='bertAdam', type=str)
     parser.add_argument('--initializer', default='xavier_uniform_', type=str)
     parser.add_argument('--learning_rate', default=2e-5, type=float)  # try 5e-5, 3e-5, 2e-5 for BERT models (sensitive)
     parser.add_argument('--dropout', default=0.1, type=float)
@@ -262,33 +274,31 @@ if __name__ == '__main__':
     dataset_path = 'datasets/semeval14'
 
     models={
-        'bert_bio':BERT_BIO,
+        # 'bert_bio':BERT_BIO,
         'bert_sa':BERT_SA,
-        'bert_te':BERT_TE
+        'bert_te':BERT_TE,
+        'bert_bio':BERT_MULTILAYER
     }
+
 
     state_dic_file={
         'bert_bio':'state_dict/bert_te_restaurant_f10.8056',
         'bert_te':'state_dict/bert_sa_restaurant_f10.787',
         'bert_sa':'state_dict/bert_te_restaurant_f10.8056'
     }
-    # dataset_files = {
-    #     'restaurant':{
-    #         'train':os.path.join(dataset_path, 'Restaurants_Train.pkl'),
-    #         'test':os.path.join(dataset_path, 'Restaurants_Test.pkl')
-    #     }
-    # }
     dataset_files = {
-        'restaurant': {
-            'train': os.path.join(dataset_path, 'Cutout_Restaurant_Train.pkl'),
-            'test': os.path.join(dataset_path, 'Cutout_Restaurant_Test.pkl')
+        'restaurant':{
+            'train':os.path.join(dataset_path, 'Restaurants_Train.pkl'),
+            'test':os.path.join(dataset_path, 'Restaurants_Test.pkl')
         }
     }
-    # class_dims={
-    #     'bert_bio':5,
-    #     'bert_te':3,
-    #     'bert_sa':4
+    # dataset_files = {
+    #     'restaurant': {
+    #         'train': os.path.join(dataset_path, 'Cutout_Restaurant_Train.pkl'),
+    #         'test': os.path.join(dataset_path, 'Cutout_Restaurant_Test.pkl')
+    #     }
     # }
+
     class_dims = {
         'bert_bio': 5,
         'bert_te': 3,
